@@ -30,6 +30,8 @@ PubSubClient client(espClient);
 char msg[25];
 long count=0;
 
+const int blanco = 13;
+const int verde = 23;
 
 /*
  * FUNCTIONS
@@ -43,6 +45,8 @@ void setup() {
   setup_wifi();
   client.setServer(mqtt_server, mqtt_port);
   client.setCallback(callback);
+  pinMode(blanco, OUTPUT);
+  pinMode(verde, OUTPUT);
 }
 
 void loop() {
@@ -133,5 +137,33 @@ void callback(char* topic, byte* payload, unsigned int length){
   }
   incoming.trim();
   Serial.println("Mensaje -> " + incoming);
+  
+    //*****************Primer output (usando topic: esp32/output1)***************
+    if (String(topic) == "esp32/output1") {
+      serial.print("Cambio de salida: ");
+      if(messageTemp == "on") {
+        Serial.println("on");
+        digitalWrite(blanco, HIGH);
+      }
+      else if(messageTemp == "off") {
+        Serial.println("off");
+        digitalWrite(blanco, LOW);
+      }
+    }
+  
+    //*****************Segundo output (usando topic: esp32/output2)***************
+    if (String(topic) == "esp32/output2") {
+      serial.print("Cambio de salida: ");
+      if(messageTemp == "on") {
+        Serial.println("on");
+        digitalWrite(verde, HIGH);
+      }
+      else if(messageTemp == "off") {
+        Serial.println("off");
+        digitalWrite(verde, LOW);
+      }
+    }
 
 }
+
+
