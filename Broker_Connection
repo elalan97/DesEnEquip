@@ -1,168 +1,241 @@
-#include <Arduino.h>
-#include <WiFi.h>
-#include <PubSubClient.h>
+#include "secrets.h"
+#include "WiFi.h"
+#include <WiFiClientSecure.h>
+#include <MQTTClient.h>
+#include <ArduinoJson.h>
 
 
-/*
- * MQTT CONFIGURATION
- */
-const char *mqtt_server = "ioticos.org";
-const int mqtt_port = 1883;
-const char *mqtt_user = "nTYMBtZl07dkQmf";
-const char *mqtt_pass = "FyGAlegwJTd8q8Y";
-const char *root_topic_subscribe = "ovSnhtQgPRn2bep/input";
-const char *root_topic_publish = "ovSnhtQgPRn2bep/output";
+// The MQTT topics that this device should publish/subscribe
+#define AWS_IOT_PUBLISH_TOPIC   "esp32/pub"
+//#define AWS_IOT_SUBSCRIBE_TOPIC "esp32/sub"
+#define AWS_IOT_PUBLISH_TOPIC_1 "esp32/door"
+#define AWS_IOT_PUBLISH_TOPIC_2 "esp32/movement"
+#define AWS_IOT_SUBSCRIBE_TOPIC "esp32/light"
 
+WiFiClientSecure net = WiFiClientSecure();
+MQTTClient client = MQTTClient(256);
 
-/*
- * WI-FI CONFIGURATION
- */
-const char* ssid = "Nombre de la Red";
-const char* password =  "00000000000";
+long lastMsg = 0;
+char msg[50];
+int value = 0;
 
+String idUsuario = "example";
+String idCasa = "1";
 
+const int verde = 13; //Pines de cada led
+const int blanco = 15;
+const int rojo = 19;
+const int azul = 23;
+const int movimiento = 21;
+const int apertura = 34;
 
-/*
- * GLOBAL VARIABLES
- */
-WiFiClient espClient;
-PubSubClient client(espClient);
-char msg[25];
-long count=0;
+void connectAWS()
+{
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
-const int blanco = 13;
-const int verde = 23;
-
-/*
- * FUNCTIONS
- */
-void callback(char* topic, byte* payload, unsigned int length);
-void reconnect();
-void setup_wifi();
-
-void setup() {
-  Serial.begin(115200);
-  setup_wifi();
-  client.setServer(mqtt_server, mqtt_port);
-  client.setCallback(callback);
-  pinMode(blanco, OUTPUT);
-  pinMode(verde, OUTPUT);
-}
-
-void loop() {
-
-  if (!client.connected()) {
-    reconnect();
-  }
-
-  if (client.connected()){
-    String str = "La cuenta es -> " + String(count);
-    str.toCharArray(msg,25);
-    client.publish(root_topic_publish, msg);
-    count++;
-    delay(300);
-  }
-  client.loop();
-}
-
-
-
-
-/*
- * WIFI CONNECTION
- */
-void setup_wifi(){
-  delay(10);
-  // Connect to our Wi-Fi network
-  Serial.println();
-  Serial.print("Conectando a ssid: ");
-  Serial.println(ssid);
-
-  WiFi.begin(ssid, password);
+  Serial.println("Connecting to Wi-Fi");
 
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
   }
 
-  Serial.println("");
-  Serial.println("Conectado a red WiFi!");
-  Serial.println("Dirección IP: ");
-  Serial.println(WiFi.localIP());
+  // Configure WiFiClientSecure to use the AWS IoT device credentials
+  net.setCACert(AWS_CERT_CA);
+  net.setCertificate(AWS_CERT_CRT);
+  net.setPrivateKey(AWS_CERT_PRIVATE);
+
+  // Connect to the MQTT broker on the AWS endpoint we defined earlier
+  client.begin(AWS_IOT_ENDPOINT, 8883, net);
+
+  // Create a message handler
+  client.onMessage(messageHandler);
+
+  Serial.print("Connecting to AWS IOT");
+
+  while (!client.connect(THINGNAME)) {
+    Serial.print(".");
+    delay(100);
+  }
+
+  if (!client.connected()) {
+    Serial.println("AWS IoT Timeout!");
+    return;
+  }
+
+  // Subscribe to a topic
+  client.subscribe(AWS_IOT_SUBSCRIBE_TOPIC);
+
+  Serial.println("AWS IoT Connected!");
 }
 
+/*void publishMessage()
+{
+  StaticJsonDocument<200> doc;
+  doc["time"] = millis();
+  doc["sensor_a0"] = random(1000);
+  char jsonBuffer[512];
+  serializeJson(doc, jsonBuffer); // print to client
+  client.publish(AWS_IOT_PUBLISH_TOPIC, jsonBuffer);
+}*/
+
+void messageHandler(String &topic, String &payload) {
 
 
-/*
- * MQTT CONNECTION
- */
 
-void reconnect() {
+  Serial.println("incoming: " + topic + " - " + payload);
 
-  while (!client.connected()) {
-    Serial.print("Intentando conexión Mqtt...");
-    // Create a client ID
-    String clientId = "IOTICOS_H_W_";
-    clientId += String(random(0xffff), HEX);
-    // We try to connect
-    if (client.connect(clientId.c_str(),mqtt_user,mqtt_pass)) {
-      Serial.println("Conectado!");
-      // We subscribe
-      if(client.subscribe(root_topic_subscribe)){
-        Serial.println("Suscripcion ok");
-      }else{
-        Serial.println("fallo Suscripciión");
-      }
-    } else {
-      Serial.print("falló :( con error -> ");
-      Serial.print(client.state());
-      Serial.println(" Intentamos de nuevo en 5 segundos");
-      delay(5000);
-    }
+  StaticJsonDocument<256> doc;
+  deserializeJson(doc, payload); 
+  const char* estructura = doc["message"];
+  Serial.print(estructura);
+
+  if (String(estructura) == (idUsuario + "|" + idCasa + "|" + "LIGHT_1|ON") && String(topic) == "esp32/light") {
+              digitalWrite(blanco, HIGH);
+              doc["ESTATUS_LED_1"] = "ON";
+              char jsonBuffer[512];
+              serializeJson(doc, jsonBuffer);
+              client.publish(AWS_IOT_PUBLISH_TOPIC, jsonBuffer);
+    
+    
+
+  } else if (String(estructura) == (idUsuario + "|" + idCasa + "|" + "LIGHT_1|OFF") && String(topic) == "esp32/light") {
+             digitalWrite(blanco, LOW);
+             doc["ESTATUS_LED_1"] = "OFF";
+             char jsonBuffer[512];
+             serializeJson(doc, jsonBuffer);
+             client.publish(AWS_IOT_PUBLISH_TOPIC, jsonBuffer);
   }
-}
 
+  if (String(estructura) == (idUsuario + "|" + idCasa + "|" + "LIGHT_2|ON") && String(topic) == "esp32/light") {
+             digitalWrite(verde, HIGH);
+             doc["ESTATUS_LED_2"] = "ON";
+             char jsonBuffer[512];
+             serializeJson(doc, jsonBuffer);
+             client.publish(AWS_IOT_PUBLISH_TOPIC, jsonBuffer);             
 
-/*
- * CALLBACK
- */
-
-void callback(char* topic, byte* payload, unsigned int length){
-  String incoming = "";
-  Serial.print("Mensaje recibido desde -> ");
-  Serial.print(topic);
-  Serial.println("");
-  for (int i = 0; i < length; i++) {
-    incoming += (char)payload[i];
+  } else if(String(estructura) == (idUsuario + "|" + idCasa + "|" + "LIGHT_2|OFF") && String(topic) == "esp32/light") {
+             digitalWrite(verde, LOW);
+             doc["ESTATUS_LED_2"] = "OFF";
+             char jsonBuffer[512];
+             serializeJson(doc, jsonBuffer);
+             client.publish(AWS_IOT_PUBLISH_TOPIC, jsonBuffer);              
   }
-  incoming.trim();
-  Serial.println("Mensaje -> " + incoming);
-  
-    //*****************Primer output (usando topic: esp32/output1)***************
-    if (String(topic) == "esp32/output1") {
-      serial.print("Cambio de salida: ");
-      if(messageTemp == "on") {
-        Serial.println("on");
+
+  if (String(estructura) == (idUsuario + "|" + idCasa + "|" + "LIGHT_3|ON") && String(topic) == "esp32/light") {
+            digitalWrite(azul, HIGH);
+            doc["ESTATUS_LED_3"] = "ON";
+            char jsonBuffer[512];
+            serializeJson(doc, jsonBuffer);
+            client.publish(AWS_IOT_PUBLISH_TOPIC, jsonBuffer); 
+
+  } else if(String(estructura) == (idUsuario + "|" + idCasa + "|" + "LIGHT_3|OFF") && String(topic) == "esp32/light") {
+            digitalWrite(azul, LOW);
+            doc["ESTATUS_LED_3"] = "OFF";
+            char jsonBuffer[512];
+            serializeJson(doc, jsonBuffer);
+            client.publish(AWS_IOT_PUBLISH_TOPIC, jsonBuffer); 
+  }
+
+  if (String(estructura) == (idUsuario + "|" + idCasa + "|" + "LIGHT_4|ON") && String(topic) == "esp32/light") {
+            digitalWrite(rojo, HIGH);
+            doc["ESTATUS_LED_4"] = "ON";
+            char jsonBuffer[512];
+            serializeJson(doc, jsonBuffer);
+            client.publish(AWS_IOT_PUBLISH_TOPIC, jsonBuffer);
+
+  } else if(String(estructura) == (idUsuario + "|" + idCasa + "|" + "LIGHT_4|OFF") && String(topic) == "esp32/light") {
+            digitalWrite(rojo, LOW);
+            doc["ESTATUS_LED_4"] = "OFF";
+            char jsonBuffer[512];
+            serializeJson(doc, jsonBuffer);
+            client.publish(AWS_IOT_PUBLISH_TOPIC, jsonBuffer);
+  }
+
+  if (String(estructura) == (idUsuario + "|" + idCasa + "|" + "LIGHTS|ON") && String(topic) == "esp32/light") {
         digitalWrite(blanco, HIGH);
-      }
-      else if(messageTemp == "off") {
-        Serial.println("off");
-        digitalWrite(blanco, LOW);
-      }
-    }
-  
-    //*****************Segundo output (usando topic: esp32/output2)***************
-    if (String(topic) == "esp32/output2") {
-      serial.print("Cambio de salida: ");
-      if(messageTemp == "on") {
-        Serial.println("on");
         digitalWrite(verde, HIGH);
-      }
-      else if(messageTemp == "off") {
-        Serial.println("off");
+        digitalWrite(azul, HIGH);
+        digitalWrite(rojo, HIGH);
+        doc["ESTATUS_LEDS"] = "ON";
+        char jsonBuffer[512];
+        serializeJson(doc, jsonBuffer);
+        client.publish(AWS_IOT_PUBLISH_TOPIC, jsonBuffer);
+
+  } else if(String(estructura) == (idUsuario + "|" + idCasa + "|" + "LIGHTS|OFF") && String(topic) == "esp32/light") {
+        digitalWrite(blanco, LOW);
         digitalWrite(verde, LOW);
-      }
-    }
+        digitalWrite(azul, LOW);
+        digitalWrite(rojo, LOW);
+        doc["ESTATUS_LEDS"] = "OFF";
+        char jsonBuffer[512];
+        serializeJson(doc, jsonBuffer);
+        client.publish(AWS_IOT_PUBLISH_TOPIC, jsonBuffer);
+  }
+}
+
+void sensor_movimiento(){
+  StaticJsonDocument<256> doc;
+  if(digitalRead(movimiento) == HIGH){
+    
+        
+    doc["ESTATUS"] = "TRUE";
+    doc["MESSAGE"] = "MOVIMIENTO";
+    char jsonBuffer[512];
+    serializeJson(doc, jsonBuffer);
+    client.publish(AWS_IOT_PUBLISH_TOPIC_2, jsonBuffer); 
+    
+  }else{
+
+    doc["ESTATUS"] = "FALSE";
+    doc["MESSAGE"] = "MOVIMIENTO";
+    char jsonBuffer[512];
+    serializeJson(doc, jsonBuffer);
+    client.publish(AWS_IOT_PUBLISH_TOPIC_2, jsonBuffer); 
+  }
+}
+
+void sensor_apertura(){
+
+  StaticJsonDocument<256> doc;
+  if(digitalRead(apertura) == LOW){
+    
+    doc["ESTATUS"] = "FALSE";
+    doc["MESSAGE"] = "APERTURA";
+    char jsonBuffer[512];
+    serializeJson(doc, jsonBuffer);
+    client.publish(AWS_IOT_PUBLISH_TOPIC_1, jsonBuffer); 
+    
+  }else{
+
+    
+    doc["ESTATUS"] = "TRUE";
+    doc["MESSAGE"] = "APERTURA";
+    char jsonBuffer[512];
+    serializeJson(doc, jsonBuffer);
+    client.publish(AWS_IOT_PUBLISH_TOPIC_1, jsonBuffer); 
+  }
+}
+
+void setup() {
+Serial.begin(115200);
+pinMode(blanco, OUTPUT);
+pinMode(verde, OUTPUT);
+pinMode(azul, OUTPUT);
+pinMode(rojo, OUTPUT);
+pinMode(movimiento, INPUT);
+pinMode(apertura, INPUT);
+connectAWS();
+
+}
+
+void loop() {
+//publishMessage();
+sensor_apertura();
+sensor_movimiento();
+client.loop();
+delay(3000);
 
 }
 
